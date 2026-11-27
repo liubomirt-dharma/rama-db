@@ -57,8 +57,15 @@ class Catalog(unittest.TestCase):
 
     def test_people_directory(self):
         p = self.page
+        entry = p.locator("aside #categoryPanel").get_by_role("link", name="Личности", exact=True)
+        self.assertEqual(p.locator("header").get_by_role("link", name="Личности").count(), 0)
+        entry.click()
+        p.locator("#peopleDirectory").wait_for()
+        p.go_back()
         p.set_viewport_size({"width": 320, "height": 720})
-        p.get_by_role("link", name="Личности", exact=True).click()
+        expect(entry).to_be_hidden()
+        p.locator("#mobileCategories").click()
+        entry.click()
         p.locator("#peopleDirectory").wait_for()
         self.assertLessEqual(p.evaluate("document.documentElement.scrollWidth"), 320)
         links = p.locator("#peopleList a")
