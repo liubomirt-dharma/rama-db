@@ -189,6 +189,116 @@ class Catalog(unittest.TestCase):
         expect(p.locator("#groupOption")).to_be_hidden()
         expect(p.locator("#results")).to_have_attribute("data-layout", "grid")
 
+    def test_event_filters(self):
+        p = self.page
+        self.assertTrue(p.locator("#eventPanel").is_hidden())
+        p.goto(self.url + "#cat=shelling")
+        self.assertEqual(self.count(), 89)
+        self.assertEqual(p.locator("#eventPeriod option").count(), 4)
+        self.assertEqual(p.locator("#eventYear option").all_text_contents()[1:],
+                         ["2026 (9)", "2025 (7)", "2024 (1)"])
+        p.clock.set_system_time("2025-05-01T12:00:00Z")
+        p.locator("#eventPeriod").select_option("current")
+        self.assertEqual(self.count(), 7)
+        p.locator("#eventPeriod").select_option("previous")
+        self.assertEqual(self.count(), 1)
+        p.locator("#eventPeriod").select_option("year")
+        p.locator("#eventYear").select_option("2026")
+        p.locator("#cityMenu summary").click()
+        p.locator("#citySearch").fill("Odessa")
+        expect(p.locator("#cityList label")).to_have_count(1)
+        self.assertEqual(p.locator("#cityList small").inner_text(), "4")
+        p.locator("#cityList input").check()
+        self.assertEqual(self.count(), 4)
+        p.locator("#citySearch").fill("Kyiv")
+        self.assertEqual(p.locator("#cityList small").inner_text(), "4")
+        p.locator("#cityList input").check()
+        self.assertEqual(self.count(), 6)
+        self.assertEqual(p.locator("#eventYear option").all_text_contents()[1:],
+                         ["2026 (6)", "2025 (5)", "2024 (0)"])
+        p.locator("#citySearch").fill("")
+        labels = p.locator("#cityList label").all_text_contents()
+        self.assertFalse(any("область" in label or "Донбасс" in label for label in labels))
+        p.locator("#citySearch").press("Escape")
+        expect(p.locator("#citySearch")).to_be_hidden()
+        p.locator("#sort").select_option("event-old")
+        p.reload()
+        self.assertEqual(self.count(), 6)
+        self.assertEqual(p.locator("#sort").input_value(), "event-old")
+        p.locator("[data-remove='city:Одесса']").click()
+        self.assertEqual(self.count(), 4)
+        p.locator("#eventReset").click()
+        self.assertEqual(self.count(), 89)
+        p.locator("#search").fill("Одесса")
+        p.locator("#search").press("Enter")
+        p.locator("#results [data-event-place='Одесса']").first.click()
+        self.assertEqual(p.locator("#search").input_value(), "Одесса")
+        self.assertIn("cat=shelling", p.url)
+        p.locator("#eventReset").click()
+        self.assertEqual(p.locator("#search").input_value(), "Одесса")
+        p.locator("#clear").click()
+        p.locator("#eventPeriod").select_option("previous")
+        p.locator("#categories [data-cat='mobilization']").click()
+        self.assertEqual(self.count(), 44)
+        expect(p.locator("#eventPanel")).to_be_hidden()
+        self.assertEqual(p.locator("#sort option").count(), 3)
+        p.go_back()
+        expect(p.locator("#eventPanel")).to_be_visible()
+        self.assertEqual(self.count(), 1)
+        p.locator("#videos").click()
+        expect(p.locator("#eventPanel")).to_be_hidden()
+        p.locator("#fragments").click()
+        self.assertEqual(self.count(), 89)
+
+    def test_event_sort_and_groups(self):
+        p = self.page
+        p.goto(self.url + "#cat=shelling")
+        known = {"v001-t000436", "v002-t001140", "v003-t000548", "v016-t000281",
+                 "v017-t000400", "v017-t001825", "v018-t000103", "v026-t003021",
+                 "v026-t004309", "v053-t002325", "v066-t001319", "v068-t000535",
+                 "v069-t000344", "v094-t000398", "v127-t008494", "v084-full", "v086-full"}
+        for order, first in (("event-new","v001-t000436"), ("event-old","v127-t008494")):
+            p.locator("#sort").select_option(order)
+            ids = p.locator(".result .primary").evaluate_all("bs => bs.map(b => b.dataset.open)")
+            self.assertEqual(ids[0], first)
+            self.assertEqual(set(ids[:len(known)]), known)
+        p.locator("#sort").select_option("city-asc")
+        self.assertIn("Белгород-Днестровский",p.locator(".result").first.text_content())
+        p.locator("#sort").select_option("city-desc")
+        self.assertIn("Херсон",p.locator(".result").first.text_content())
+        for grouping in ("video","year","date","city"):
+            p.locator("#eventGroup").select_option(grouping)
+            for layout in ("grid","text","list"):
+                p.locator(f"#layouts [data-layout={layout}]").click()
+                self.assertGreater(p.locator(".video-group").count(), 0)
+                if layout == "text":
+                    self.assertEqual(p.locator("#results img").count(), 0)
+            p.locator("#collapseAll").click()
+            self.assertEqual(p.locator(".video-group[open]").count(), 0)
+            p.locator("#expandAll").click()
+            self.assertGreater(p.locator(".video-group[open]").count(), 0)
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        key="v001-t000436"
+        copies=p.locator(f'[data-bookmark="{key}"]')
+        self.assertEqual(copies.count(),5)
+        copies.first.click()
+        self.assertEqual(p.locator(f'[data-bookmark="{key}"][aria-pressed=true]').count(),5)
+        self.assertEqual(self.count(),89)
+        p.locator("#results [data-event-place='Одесса']").first.click()
+        self.assertEqual(p.locator(".video-group").count(),1)
+        self.assertEqual(p.locator(".video-group summary strong").inner_text(),"Одесса")
+        p.goto(self.url+"#cat=shelling&group=year")
+        expect(p.locator("#eventGroup")).to_have_value("year")
+        self.assertIn("Дата события не установлена",p.locator(".video-group summary").last.inner_text())
+        self.assertEqual(p.evaluate("eventInterval('2025-12/2026-01')"),
+                         {"start":"2025-12-01","end":"2026-01-31"})
+        self.assertEqual(p.evaluate("eventInterval('2024-02')")["end"],"2024-02-29")
+        self.assertEqual(p.evaluate("[...yearsCovered([eventInterval('2025-12/2026-01')])]"),[2025,2026])
+        self.assertEqual(p.evaluate("[...yearsCovered([eventInterval('2024'),eventInterval('2026')])]"),[2024,2026])
+        self.assertIn("день не установлен",p.evaluate("eventLabel('2025-12')"))
+
+
     def test_inventory(self):
         self.assertEqual(hashlib.sha256(self.payload.encode()).hexdigest(),
                          "1d938be8dde1b9f4ea8d0ad04c145c31ea3d00ee2c8d6550a5228ae393033814")
