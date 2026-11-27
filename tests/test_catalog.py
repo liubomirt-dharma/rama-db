@@ -70,7 +70,7 @@ class Catalog(unittest.TestCase):
         self.assertLessEqual(p.evaluate("document.documentElement.scrollWidth"), 320)
         links = p.locator("#peopleList a")
         names = links.locator("span").all_text_contents()
-        self.assertEqual(len(set(names)), 69)
+        self.assertEqual(len(set(names)), 68)
         self.assertNotIn("Киев", names)
         self.assertIn("Шрила Прабхупада", names)
         total = 0
@@ -89,7 +89,8 @@ class Catalog(unittest.TestCase):
                 total += len(ids)
                 p.go_back()
                 p.locator("#peopleDirectory").wait_for()
-        self.assertEqual(total, 454)
+        self.assertNotIn("Туласи Валлабха прабху", names)
+        self.assertEqual(total, 325)
         links.filter(has_text="Шрила Прабхупада").click()
         expect(p.locator("#heading")).to_have_text("Шрила Прабхупада")
         p.locator("#videos").click()
@@ -102,6 +103,91 @@ class Catalog(unittest.TestCase):
         p.locator("#close").click()
         p.locator("#clearFilters").click()
         self.assertEqual(self.count(), 141)
+
+    def test_catalog_views(self):
+        p = self.page
+        results = p.locator("#results")
+        expect(results).to_have_attribute("data-layout", "list")
+        p.goto(self.url + "#cat=mobilization&sort=old")
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        def visible_ids():
+            return p.locator(".result .primary").evaluate_all("bs => bs.map(b => b.dataset.open)")
+        original = visible_ids()
+        self.assertEqual(len(original), 44)
+        expected = {i["id"]: i for i in self.items if i["id"] in original}
+        video_ids = {i["video"] for i in expected.values()}
+        p.locator("#groupBy").check()
+        for layout in ("grid", "text", "list"):
+            p.locator(f"#layouts [data-layout={layout}]").click()
+            expect(p.locator("#groupBy")).to_be_checked()
+            while p.locator("#more").is_visible():
+                p.locator("#more").click()
+            self.assertCountEqual(visible_ids(), original)
+            self.assertIn(f"{len(video_ids)} видео", p.locator("#count").inner_text())
+            self.assertEqual(results.locator("img").count(), 0 if layout == "text" else len(video_ids))
+            for group in results.locator(".video-group").all():
+                ids = group.locator(".primary").evaluate_all("bs => bs.map(b => b.dataset.open)")
+                times = [expected[i]["seconds"] for i in ids if expected[i]["seconds"] is not None]
+                self.assertEqual(times, sorted(times))
+                self.assertEqual({expected[i]["video"] for i in ids}, {group.get_attribute("data-video")})
+        p.locator("#collapseAll").click()
+        self.assertEqual(results.locator(".video-group[open]").count(), 0)
+        p.locator("#expandAll").click()
+        self.assertGreater(results.locator(".video-group[open]").count(), 0)
+        p.locator("#groupBy").uncheck()
+        self.assertEqual(visible_ids(), original)
+        self.assertEqual(p.locator("#sort").input_value(), "old")
+        p.locator("#layouts [data-layout=text]").click()
+        requests = []
+        p.on("request", lambda req: requests.append(req.url))
+        p.reload()
+        expect(results).to_have_attribute("data-layout", "text")
+        self.assertEqual(results.locator("img").count(), 0)
+        self.assertFalse(any("i.ytimg.com" in u for u in requests))
+        p.locator("#videos").click()
+        expect(results).to_have_attribute("data-layout", "grid")
+        p.locator(".result a[href^='#source=']").first.click()
+        expect(p.locator("#fragments")).to_have_class("active")
+        expect(results).to_have_attribute("data-layout", "text")
+        p.locator("#groupBy").check()
+        p.reload()
+        expect(p.locator("#groupBy")).to_be_checked()
+        p.locator("#search").fill("невозможныйзапрос")
+        p.locator("#search").press("Enter")
+        expect(p.locator(".empty")).to_be_visible()
+        p.locator("button[data-remove=search]").click()
+        expect(p.locator(".empty")).to_have_count(0)
+        first = p.locator(".result .stamp").first
+        key = first.get_attribute("data-open")
+        first.click()
+        item = next(i for i in self.items if i["id"] == key)
+        self.assertTrue(p.locator("#detail iframe").get_attribute("src").endswith(f'?start={item["seconds"]}'))
+
+    def test_grouped_search(self):
+        p = self.page
+        p.locator("#layouts [data-layout=text]").click()
+        p.locator("#quick [data-query='Карма']").click()
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        ids = p.locator(".result .primary").evaluate_all("buttons => buttons.map(b => b.dataset.open)")
+        self.assertEqual(len(ids), 111)
+        by_id = {i["id"]: i["video"] for i in self.items}
+        video_order = list(dict.fromkeys(by_id[key] for key in ids))
+        p.locator("#groupBy").check()
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        grouped = p.locator(".result .primary").evaluate_all("buttons => buttons.map(b => b.dataset.open)")
+        self.assertCountEqual(grouped, ids)
+        self.assertEqual(list(dict.fromkeys(by_id[key] for key in grouped)), video_order)
+        bookmark = p.locator(".result .bookmark").first
+        bookmark.click()
+        p.locator("#layouts [data-layout=list]").click()
+        expect(p.locator(".result .bookmark").first).to_have_attribute("aria-pressed", "true")
+        # Grouping and the material layout remain independent of the video tab.
+        p.locator("#videos").click()
+        expect(p.locator("#groupOption")).to_be_hidden()
+        expect(p.locator("#results")).to_have_attribute("data-layout", "grid")
 
     def test_inventory(self):
         self.assertEqual(hashlib.sha256(self.payload.encode()).hexdigest(),
@@ -159,7 +245,7 @@ class Catalog(unittest.TestCase):
             dialog = page.locator("#detail[open]")
             self.assertEqual(dialog.locator("h2").inner_text(), v["title"])
             self.assertEqual(dialog.locator("iframe").get_attribute("src"),
-                             f'https://www.youtube-nocookie.com/embed/{v["id"]}?start=0')
+                             f'https://www.youtube-nocookie.com/embed/{v["id"]}')
             times = sorted(i["seconds"] for i in self.items if i["video"] == v["id"] and i["seconds"] is not None)
             hrefs = dialog.locator(".chapter a").evaluate_all("links => links.map(a => a.href)")
             self.assertEqual(hrefs, [f'https://www.youtube.com/watch?v={v["id"]}&t={t}s' for t in times])
