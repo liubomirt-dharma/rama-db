@@ -11,7 +11,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 PAYLOAD = re.compile(r"window\.RAMA_DB = (.*?);\s*</script>", re.S)
@@ -54,6 +54,47 @@ class Catalog(unittest.TestCase):
 
     def count(self):
         return int(re.sub(r"\D", "", self.page.locator("#count").inner_text()))
+
+    def test_people_directory(self):
+        p = self.page
+        p.set_viewport_size({"width": 320, "height": 720})
+        p.get_by_role("link", name="Личности", exact=True).click()
+        p.locator("#peopleDirectory").wait_for()
+        self.assertLessEqual(p.evaluate("document.documentElement.scrollWidth"), 320)
+        links = p.locator("#peopleList a")
+        names = links.locator("span").all_text_contents()
+        self.assertEqual(len(set(names)), 69)
+        self.assertNotIn("Киев", names)
+        self.assertIn("Шрила Прабхупада", names)
+        total = 0
+        for name in names:
+            with self.subTest(name=name):
+                expected = {i["id"] for i in self.items if name in i["keywords"]}
+                link = links.filter(has=p.get_by_text(name, exact=True))
+                self.assertEqual(int(link.locator("small").inner_text()), len(expected))
+                link.click()
+                expect(p.locator("#heading")).to_have_text(name)
+                self.assertEqual(self.count(), len(expected))
+                while p.locator("#more").is_visible():
+                    p.locator("#more").click()
+                ids = p.locator(".primary[data-open]").evaluate_all("buttons => buttons.map(b => b.dataset.open)")
+                self.assertCountEqual(ids, expected)
+                total += len(ids)
+                p.go_back()
+                p.locator("#peopleDirectory").wait_for()
+        self.assertEqual(total, 454)
+        links.filter(has_text="Шрила Прабхупада").click()
+        expect(p.locator("#heading")).to_have_text("Шрила Прабхупада")
+        p.locator("#videos").click()
+        expected_videos = {i["video"] for i in self.items if "Шрила Прабхупада" in i["keywords"]}
+        self.assertEqual(self.count(), len(expected_videos))
+        p.reload()
+        self.assertEqual(self.count(), len(expected_videos))
+        p.locator(".primary[data-open]").first.click()
+        self.assertTrue(p.locator("#detail iframe").is_visible())
+        p.locator("#close").click()
+        p.locator("#clearFilters").click()
+        self.assertEqual(self.count(), 141)
 
     def test_inventory(self):
         self.assertEqual(hashlib.sha256(self.payload.encode()).hexdigest(),
