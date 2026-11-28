@@ -167,7 +167,8 @@ class Catalog(unittest.TestCase):
     def test_grouped_search(self):
         p = self.page
         p.locator("#layouts [data-layout=text]").click()
-        p.locator("#quick [data-query='Карма']").click()
+        p.locator("#search").fill("Карма")
+        p.locator("#search").press("Enter")
         while p.locator("#more").is_visible():
             p.locator("#more").click()
         ids = p.locator(".result .primary").evaluate_all("buttons => buttons.map(b => b.dataset.open)")
@@ -419,22 +420,22 @@ class Catalog(unittest.TestCase):
 
     def test_filters_and_storage(self):
         p = self.page
-        p.locator('#quick [data-cat]').click()
+        p.locator('#quick a[href="#cat=war-seminar"]').click()
         p.go_back()
         self.assertEqual(self.count(), 2005)
         p.go_forward()
         self.assertLess(self.count(), 2005)
         p.locator("#clearFilters").click()
         self.assertEqual(self.count(), 2005)
-        p.locator("#kind").select_option("service")
-        self.assertEqual(self.count(), 132)
+        self.assertEqual(p.locator("#kind option").evaluate_all("opts => opts.map(o=>o.value)"), ["all","fragment","video"])
         p.locator("#kind").select_option("all")
         for order in ("old", "new"):
             p.locator("#sort").select_option(order)
             dates = p.locator(".result .meta").all_text_contents()
             dates = [re.search(r"\d{4}-\d{2}-\d{2}$", s)[0] for s in dates]
             self.assertEqual(dates, sorted(dates, reverse=order == "new"))
-        p.locator("#quick [data-query='Карма']").click()
+        p.locator("#search").fill("Карма")
+        p.locator("#search").press("Enter")
         self.assertEqual(self.count(), 111)
         self.assertGreater(p.locator("mark").count(), 0)
         for query in ('"духовная жизнь"', 'карма дхарма', 'нетсовпаденийxyz'):
@@ -471,20 +472,160 @@ class Catalog(unittest.TestCase):
     def test_layout_and_metadata(self):
         p = self.page
         self.assertEqual(p.locator("html").get_attribute("lang"), "ru")
-        self.assertIn("Rama DB", p.title())
+        self.assertIn("Центр изучения варнашрамы «Рама»", p.title())
         self.assertTrue(p.locator("meta[name=description]").get_attribute("content"))
         self.assertEqual(p.locator("link[rel=canonical]").get_attribute("href"), "https://liubomirt-dharma.github.io/rama-db/")
-        for width in (320, 375, 768, 1024, 1440):
-            p.set_viewport_size({"width": width, "height": 800})
+        for width,height in ((320,568),(360,800),(375,812),(390,844),(412,915),(430,932),(768,1024),(820,1180),(1024,768),(1180,820),(1366,768),(1440,900),(1920,1080)):
+            p.set_viewport_size({"width": width, "height": height})
             self.assertLessEqual(p.evaluate("document.documentElement.scrollWidth"), width)
             self.assertTrue(p.locator(".logo").evaluate("""logo => {
                 const text = document.createRange();
                 text.selectNodeContents(logo);
                 const bounds = text.getBoundingClientRect(), box = logo.getBoundingClientRect();
-                return bounds.top >= box.top && bounds.bottom <= box.bottom;
+                return !box.width || bounds.top >= box.top && bounds.bottom <= box.bottom;
             }"""))
             if width <= 850:
                 button = p.locator("#mobileCategories")
                 button.click()
                 p.locator('#categories [data-section-select="war"]').click()
                 self.assertEqual(button.get_attribute("aria-expanded"), "false")
+
+    def test_complete_video_filter(self):
+        p = self.page
+        all_ids = {v["id"] for v in self.db["videos"]}
+
+        def ids():
+            while p.locator("#more").is_visible():
+                p.locator("#more").click()
+            rows = p.locator(".record-info").evaluate_all("ds=>ds.map(d=>d.dataset.record)")
+            self.assertEqual(len(rows), len(set(rows)))
+            self.assertEqual(len(rows), self.count())
+            return set(rows)
+
+        for old_type in ("overview", "service"):
+            p.goto(self.url + "#kind=" + old_type)
+            expect(p.locator("#kind")).to_have_value("all")
+            self.assertNotIn("kind=", p.url)
+        p.locator("#kind").select_option("video")
+        self.assertEqual(ids(), all_ids)
+        p.locator("#categories [data-cat=mobilization]").click()
+        expected = {i["video"] for i in self.items if "mobilization" in i["cats"]}
+        self.assertEqual(ids(), expected)
+        p.goto(self.url + "#cat=shelling&period=year&year=2025&city=Одесса")
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        keys = p.locator("#results .primary").evaluate_all("bs=>bs.map(b=>b.dataset.open)")
+        p.locator("#kind").select_option("video")
+        self.assertEqual(ids(), {i["video"] for i in self.items if i["id"] in keys})
+        p.locator("#search").fill("xyz123")
+        p.locator("#search").press("Enter")
+        self.assertEqual(self.count(), 0)
+        p.locator("#allVideos").click()
+        self.assertEqual(ids(), all_ids)
+        self.assertEqual(p.locator("#sort").input_value(), "new")
+        self.assertEqual(p.locator("#search").input_value(), "")
+        self.assertEqual(p.locator("#activeFilters button").count(), 0)
+        self.assertIn("Все видео", p.title())
+        dates = p.locator(".video-record .meta").all_text_contents()
+        self.assertEqual(dates, sorted(dates, key=lambda d:d[:10], reverse=True))
+        p.locator("#search").fill("дхарма")
+        p.locator("#search").press("Enter")
+        self.assertGreater(self.count(), 0)
+        self.assertLess(self.count(), len(all_ids))
+        p.reload()
+        self.assertEqual(p.locator("#search").input_value(), "дхарма")
+
+    def test_lazy_video_disclosures(self):
+        p = self.page
+        p.locator("#allVideos").click()
+        cards = p.locator(".video-record")
+        first, second = cards.nth(0), cards.nth(1)
+        self.assertEqual(p.locator(".record-content,.record-info[open]").count(), 0)
+        first.locator("summary").click()
+        second.locator("summary").click()
+        expect(p.locator(".record-content")).to_have_count(2)
+        video = first.locator("details").get_attribute("data-record")
+        items = [i for i in self.items if i["video"] == video]
+        self.assertEqual(first.locator(".record-content .chapter").count(), len(items))
+        src = next(v for v in self.db["videos"] if v["id"] == video)
+        for d in src["descriptions"]:
+            self.assertIn(d.strip(), first.inner_text())
+        self.assertEqual(len(src["references"]), first.locator(".record-content a").count())
+        button = first.locator(".chapter button").first
+        item = next(i for i in items if i["id"] == button.get_attribute("data-open"))
+        button.click()
+        self.assertTrue(p.locator("#detail iframe").get_attribute("src").endswith(f'?start={item["seconds"]}'))
+        p.keyboard.press("Escape")
+        first.locator("summary").click()
+        expect(second.locator(".record-content")).to_be_visible()
+        p.locator("#expandAll").click()
+        expect(p.locator(".record-content")).to_have_count(24)
+        p.locator("#more").click()
+        expect(p.locator(".record-content")).to_have_count(48)
+        p.locator("#collapseAll").click()
+        expect(p.locator(".record-content")).to_have_count(0)
+        first.locator("summary").click()
+        p.locator("#allVideos").click()
+        expect(p.locator(".record-info[open]")).to_have_count(0)
+
+    def test_touch_navigation_and_shortcuts(self):
+        p = self.page
+        for link in p.locator("#quick a").all():
+            href = link.get_attribute("href")
+            link.click()
+            if "directory" in href:
+                expect(p.locator("#peopleDirectory")).to_be_visible()
+                p.go_back()
+            else:
+                self.assertGreater(self.count(), 0)
+                expect(link).to_have_attribute("aria-current", "page")
+                self.assertIn(href[1:], p.url)
+        p.set_viewport_size({"width": 375, "height": 812})
+        p.locator("#mobileCategories").click()
+        expect(p.locator("#topicDrawer")).to_be_visible()
+        p.keyboard.press("Escape")
+        expect(p.locator("#mobileCategories")).to_be_focused()
+        p.locator("#mobileSearch").click()
+        expect(p.locator("#search")).to_be_focused()
+        p.locator("#allVideos").click()
+        p.locator("#filterToggle").click()
+        p.locator("#sort").select_option("old")
+        p.locator("#mobileSaved").click()
+        expect(p.locator("#heading")).to_have_text("Избранное")
+        p.locator("#mobileHome").click()
+        expect(p.locator("#heading")).to_have_text("Все материалы")
+        p.locator("#filterToggle").click()
+        expect(p.locator("#filterFields")).to_be_hidden()
+        p.locator("#quick a[href='#cat=shelling']").click()
+        expect(p.locator("#filterToggle")).to_have_text("Фильтры · 1")
+        expect(p.locator("#heading")).to_be_in_viewport()
+
+    def test_large_text_phone(self):
+        p = self.page
+        p.set_viewport_size({"width":320, "height":568})
+        p.evaluate("""() => {
+          const elements = [...document.body.querySelectorAll('*:not(script):not(style)')];
+          const sizes = elements.map(el=>parseFloat(getComputedStyle(el).fontSize)*2);
+          elements.forEach((el,i)=>el.style.fontSize=sizes[i]+'px');
+        }""")
+        self.assertEqual(p.evaluate("document.documentElement.scrollWidth"), 320)
+        expect(p.locator("#allVideos")).to_be_in_viewport()
+        p.locator("#mobileCategories").click()
+        expect(p.locator("#drawerClose")).to_be_focused()
+        self.assertTrue(p.locator("#topicDrawer").evaluate("d=>d.scrollWidth<=d.clientWidth"))
+
+    def test_phone_landscape_touch(self):
+        context = self.browser.new_context(viewport={"width":932,"height":430}, is_mobile=True, has_touch=True)
+        self.addCleanup(context.close)
+        p = context.new_page()
+        origin = urlsplit(self.url).netloc
+        p.route("**/*", lambda r:r.continue_() if urlsplit(r.request.url).netloc == origin else r.abort())
+        p.goto(self.url)
+        p.locator("#mobileCategories").tap()
+        p.locator("#categories [data-cat=shelling]").tap()
+        expect(p.locator("#heading")).to_have_text("Обстрелы Украины")
+        expect(p.locator("#topicDrawer")).to_be_hidden()
+        expect(p.locator("#categoryPanel")).to_be_hidden()
+        p.locator("#allVideos").tap()
+        expect(p.locator("#results")).to_have_attribute("data-layout","list")
+        self.assertEqual(p.evaluate("document.documentElement.scrollWidth"), 932)
