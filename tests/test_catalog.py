@@ -172,7 +172,7 @@ class Catalog(unittest.TestCase):
         while p.locator("#more").is_visible():
             p.locator("#more").click()
         ids = p.locator(".result .primary").evaluate_all("buttons => buttons.map(b => b.dataset.open)")
-        self.assertEqual(len(ids), 111)
+        self.assertEqual(len(ids), 113)
         by_id = {i["id"]: i["video"] for i in self.items}
         video_order = list(dict.fromkeys(by_id[key] for key in ids))
         p.locator("#groupBy").check()
@@ -335,7 +335,7 @@ class Catalog(unittest.TestCase):
 
     def test_inventory(self):
         self.assertEqual(hashlib.sha256(self.payload.encode()).hexdigest(),
-                         "1d938be8dde1b9f4ea8d0ad04c145c31ea3d00ee2c8d6550a5228ae393033814")
+                         "8de3dc41f30d17bd4ba91db0f9e34ee28919f3d7ac4aeabb4a3bbb6fd7656156")
         d = self.db
         for key in ("sections", "categories", "videos", "items"):
             self.assertEqual(len(d[key]), len({row["id"] for row in d[key]}))
@@ -343,7 +343,7 @@ class Catalog(unittest.TestCase):
         cats = {c["id"] for c in d["categories"]}
         self.assertEqual(len(videos), 141)
         self.assertEqual(sum(i["seconds"] is not None for i in self.items), 2099)
-        self.assertEqual(sum(len(i["cats"]) for i in self.items), 3678)
+        self.assertEqual(sum(len(i["cats"]) for i in self.items), 3522)
         self.assertEqual(sum(len(v["references"]) for v in d["videos"]), 80)
         self.assertEqual(sum(len(v["descriptions"]) for v in d["videos"]), 136)
         for i in self.items:
@@ -351,6 +351,42 @@ class Catalog(unittest.TestCase):
             self.assertTrue(set(i["cats"]) <= cats)
             self.assertEqual(len(i["cats"]), len(set(i["cats"])))
             self.assertTrue(i["seconds"] is None or isinstance(i["seconds"], int) and i["seconds"] >= 0)
+
+    def test_reviewed_topic_memberships(self):
+        # Fingerprint of the v6 public export, excluding only the reviewed memberships.
+        base = json.loads(self.payload)
+        for item in base["items"]:
+            del item["cats"]
+        raw = json.dumps(base, ensure_ascii=False, separators=(",", ":")).encode()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         "05a89ca3b080896c6ed7abeeeb935780b1aa4aa3dccc07b39ad1eda1559a07df")
+        p = self.page
+        expected_topics = {
+            "v001-t010221": "abuse",       # Показания учеников гурукулы
+            "v001-t005565": "sannyasa",    # Возвращение в санньясу
+            "v002-t006140": "governance",  # План GBC
+            "v005-t007759": "propaganda",  # Тезисы Тарун Кришна даса
+        }
+        p.goto(self.url + "#cat=science")
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
+        science = set(p.locator("#results .primary").evaluate_all("bs=>bs.map(b=>b.dataset.open)"))
+        self.assertEqual(len(science), 44)
+        self.assertTrue(science.isdisjoint(expected_topics))
+        self.assertTrue({"v025-t000198","v001-t002763","v025-t000274"} <= science)
+        by_id = {i["id"]: i for i in self.items}
+        news = {i["id"] for i in self.items if i["type"] != "service" and not i["cats"]}
+        self.assertEqual(news, {"v106-t000788", "v108-t001537"})
+        for key in news:
+            p.goto(self.url)
+            p.locator("#search").fill(by_id[key]["title"])
+            p.locator("#search").press("Enter")
+            expect(p.locator(f'#results .primary[data-open="{key}"]')).to_be_visible()
+        for key, topic in expected_topics.items():
+            self.assertIn(topic, by_id[key]["cats"])
+        self.assertEqual(by_id["v076-t000259"]["cats"], ["astrology"])
+        self.assertNotIn("military", by_id["v008-t002957"]["cats"])
+        self.assertNotIn("interfaith", by_id["v133-t004255"]["cats"])
 
     def test_all_topics(self):
         cats = self.db["categories"]
@@ -436,7 +472,7 @@ class Catalog(unittest.TestCase):
             self.assertEqual(dates, sorted(dates, reverse=order == "new"))
         p.locator("#search").fill("Карма")
         p.locator("#search").press("Enter")
-        self.assertEqual(self.count(), 111)
+        self.assertEqual(self.count(), 113)
         self.assertGreater(p.locator("mark").count(), 0)
         for query in ('"духовная жизнь"', 'карма дхарма', 'нетсовпаденийxyz'):
             p.locator("#search").fill(query)
