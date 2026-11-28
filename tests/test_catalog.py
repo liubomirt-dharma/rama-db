@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-PAYLOAD = re.compile(r"window\.RAMA_DB = (.*?);\s*</script>", re.S)
+PAYLOAD = re.compile(r"window\.RAMA_DB = (.*);\s*", re.S)
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -47,7 +47,8 @@ class Catalog(unittest.TestCase):
         self.assertTrue(response.ok)
         self.db = self.page.evaluate("window.RAMA_DB")
         self.items = self.db["items"]
-        self.payload = PAYLOAD.search(response.text())[1]
+        catalog_url = self.page.locator('script[src$="/catalog.js"]').evaluate("s => s.src")
+        self.payload = PAYLOAD.fullmatch(self.page.request.get(catalog_url).text())[1]
 
     def tearDown(self):
         self.assertEqual(self.errors, [])

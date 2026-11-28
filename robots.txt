@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /rama-db/
+
+Sitemap: https://liubomirt-dharma.github.io/rama-db/sitemap.xml
