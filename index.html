@@ -134,6 +134,17 @@ const shellingDates = {
   'v086-full':['2025-06-17,2025-06-20','17/20.06.2025']
 };
 
+// Ручные сопоставления: период, проверочная карточка, основание.
+// Для продолжений многодневных сводок подтверждён месяц, а не день удара.
+const shellingContextDates = {
+  'v001-t000882': ['2026-11','v001-t000436','Кадры из ноябрьской сводки'],
+  'v001-t001314': ['2026-11','v001-t000436','Продолжение ноябрьской сводки'],
+  'v001-t001813': ['2026-11','v001-t000436','Итоги ноябрьской сводки'],
+  'v002-t001451': ['2026-11','v002-t001140','Кадры последствий из ноябрьской хроники'],
+  'v017-t002440': ['2026-07-06','v017-t001825','Продолжение рассказа об атаке на Киев'],
+  'v085-t000478': ['2025-06-17,2025-06-20','v086-full','Те же города и оба июньских дня в описании киртана']
+};
+
 function eventInterval(spec) {
   const [start, end=start] = spec.split('/');
   const [year, month=12, day] = end.split('-').map(Number);
@@ -177,11 +188,13 @@ function createShellingIndex(items) {
   for (const item of items.filter(i => i.cats.includes('shelling'))) {
     const cities = [...new Set(item.keywords.map(k => canonical.get(normalize(k))).filter(Boolean))].sort(collator.compare);
     for (const city of cities) citySet.add(city);
-    const [spec='', quote=''] = shellingDates[item.id] || [];
+    const evidence = shellingContextDates[item.id];
+    const [spec='', quote=''] = shellingDates[item.id] || [evidence?.[0]];
+
     const intervals = spec ? spec.split(',').map(eventInterval) : [];
     const years = yearsCovered(intervals);
     for (const y of years) yearSet.add(y);
-    metadata.set(item.id,{cities, years, spec, quote, start:intervals[0]?.start,end:intervals.at(-1)?.end});
+    metadata.set(item.id,{cities, years, spec, quote, evidence, start:intervals[0]?.start,end:intervals.at(-1)?.end});
   }
   return {metadata, cities:[...citySet].sort(collator.compare), years:[...yearSet].sort((a,b)=>b-a),
     canonical:name=>canonical.get(normalize(name)), matches:(city,q)=>aliases.get(city).some(a=>a.includes(normalize(q.trim()))), compare:collator.compare};
@@ -529,9 +542,11 @@ function card(i, nested=false) {
   const source = !nested && video.title !== i.title ? hl(video.title) : '';
   const singleton = (archive.enabled ? archive.group==='video' : groupEnabled) && mode === 'items' && !nested;
   const info = !nested ? [source, archive.enabled && video.date ? 'Опубликовано: '+safe(video.date) : safe(video.date), singleton && '1 материал'].filter(Boolean).join(' · ') : '';
+  const event = archive.enabled && archive.meta(i.id);
   const materialCount = whole ? (chapters.get(i.video) || []).filter(c => c.type !== 'service').length : 0;
   return `<article class="result">
     <h3>${eventTitle(i)}</h3>
+    ${event?.evidence ? `<div class="event-date">События: ${safe(eventLabel(event.spec))} · <button class="external" data-open="${safe(event.evidence[1])}" title="${safe(event.evidence[2])}">Источник даты</button></div>` : ''}
     ${showImage ? `<button class="thumb-link" data-open="${id}" aria-label="Открыть видео">${thumbnail(i.video)}</button>` : ''}
     ${description ? `<p class="excerpt">${context ? 'Из описания видео · ' : ''}${hl(description)}</p>` : ''}
     ${tags.length ? `<div class="tags">${tags.join('')}</div>` : ''}
