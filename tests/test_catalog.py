@@ -196,12 +196,12 @@ class Catalog(unittest.TestCase):
         self.assertEqual(self.count(), 89)
         self.assertEqual(p.locator("#eventPeriod option").count(), 4)
         self.assertEqual(p.locator("#eventYear option").all_text_contents()[1:],
-                         ["2026 (14)", "2025 (8)", "2024 (1)"])
+                         ["2026 (34)", "2025 (49)", "2024 (6)"])
         p.clock.set_system_time("2025-05-01T12:00:00Z")
         p.locator("#eventPeriod").select_option("current")
-        self.assertEqual(self.count(), 8)
+        self.assertEqual(self.count(), 49)
         p.locator("#eventPeriod").select_option("previous")
-        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.count(), 6)
         p.locator("#eventPeriod").select_option("year")
         p.locator("#eventYear").select_option("2026")
         p.locator("#cityMenu summary").click()
@@ -211,11 +211,11 @@ class Catalog(unittest.TestCase):
         p.locator("#cityList input").check()
         self.assertEqual(self.count(), 7)
         p.locator("#citySearch").fill("Kyiv")
-        self.assertEqual(p.locator("#cityList small").inner_text(), "9")
+        self.assertEqual(p.locator("#cityList small").inner_text(), "13")
         p.locator("#cityList input").check()
-        self.assertEqual(self.count(), 11)
+        self.assertEqual(self.count(), 15)
         self.assertEqual(p.locator("#eventYear option").all_text_contents()[1:],
-                         ["2026 (11)", "2025 (6)", "2024 (0)"])
+                         ["2026 (15)", "2025 (20)", "2024 (2)"])
         p.locator("#citySearch").fill("")
         labels = p.locator("#cityList label").all_text_contents()
         self.assertFalse(any("область" in label or "Донбасс" in label for label in labels))
@@ -223,10 +223,10 @@ class Catalog(unittest.TestCase):
         expect(p.locator("#citySearch")).to_be_hidden()
         p.locator("#sort").select_option("event-old")
         p.reload()
-        self.assertEqual(self.count(), 11)
+        self.assertEqual(self.count(), 15)
         self.assertEqual(p.locator("#sort").input_value(), "event-old")
         p.locator("[data-remove='city:Одесса']").click()
-        self.assertEqual(self.count(), 9)
+        self.assertEqual(self.count(), 13)
         p.locator("#eventReset").click()
         self.assertEqual(self.count(), 89)
         p.locator("#search").fill("Одесса")
@@ -244,7 +244,7 @@ class Catalog(unittest.TestCase):
         self.assertEqual(p.locator("#sort option").count(), 3)
         p.go_back()
         expect(p.locator("#eventPanel")).to_be_visible()
-        self.assertEqual(self.count(), 1)
+        self.assertEqual(self.count(), 6)
         p.locator("#videos").click()
         expect(p.locator("#eventPanel")).to_be_hidden()
         p.locator("#fragments").click()
@@ -254,34 +254,47 @@ class Catalog(unittest.TestCase):
         p = self.page
         p.clock.set_system_time("2026-11-28T12:00:00Z")
         p.goto(self.url + "#cat=shelling&period=current")
-        self.assertEqual(self.count(), 14)
+        self.assertEqual(self.count(), 34)
         results = p.locator("#results .result")
         continuation = results.filter(has=p.locator('[data-bookmark="v001-t000882"]'))
-        expect(continuation.locator(".event-date")).to_contain_text("ноябрь")
+        expect(continuation.locator(".event-date")).to_contain_text("ноября")
         continuation.get_by_role("button", name="Источник даты").click()
         self.assertIn("с 18 по 22 ноября 2026", p.locator("#detail h2").text_content())
         p.locator("#close").click()
-        # In the January 2026 release this chapter names a city, but no event year.
-        expect(p.locator('[data-bookmark="v050-t000870"]')).to_have_count(0)
+        p.locator("#more").click()
+        january = results.filter(has=p.locator('[data-bookmark="v050-t000870"]'))
+        expect(january.locator(".event-date")).to_have_text("2026 год · предположительный год по публикации видео")
         p.goto(self.url + "#cat=shelling&period=year&year=2025")
+        expect(p.locator("#eventYear")).to_have_value("2025")
+        while p.locator("#more").is_visible():
+            p.locator("#more").click()
         cross_reference = p.locator(".result").filter(has=p.locator('[data-bookmark="v085-t000478"]'))
         cross_reference.get_by_role("button", name="Источник даты").click()
         expect(p.locator("#detail")).to_contain_text("17 и 20 июня 2025 года")
 
+    def test_documented_date_precedes_publication_year(self):
+        result = self.page.evaluate("""() => {
+          const records = db.items.filter(i => ['v001-t000436','v050-t000870'].includes(i.id));
+          const videoDates = new Map(records.map(i => [i.video,{date:'2024-01-01'}]));
+          const index = createShellingIndex(records, videoDates).metadata;
+          return records.map(i => [i.id,index.get(i.id).spec,index.get(i.id).inferred]);
+        }""")
+        self.assertCountEqual(result,[["v001-t000436","2026-11-18/2026-11-22",False],
+                                      ["v050-t000870","2024",True]])
+
     def test_event_sort_and_groups(self):
         p = self.page
         p.goto(self.url + "#cat=shelling")
-        known = {"v001-t000436", "v002-t001140", "v003-t000548", "v016-t000281",
-                 "v017-t000400", "v017-t001825", "v018-t000103", "v026-t003021",
-                 "v026-t004309", "v053-t002325", "v066-t001319", "v068-t000535",
-                 "v069-t000344", "v094-t000398", "v127-t008494", "v084-full", "v086-full",
-                 "v001-t000882", "v001-t001314", "v001-t001813", "v002-t001451",
-                 "v017-t002440", "v085-t000478"}
-        for order, first in (("event-new","v001-t000882"), ("event-old","v127-t008494")):
+        for order in ("event-new","event-old"):
             p.locator("#sort").select_option(order)
+            while p.locator("#more").is_visible():
+                p.locator("#more").click()
             ids = p.locator(".result .primary").evaluate_all("bs => bs.map(b => b.dataset.open)")
-            self.assertEqual(ids[0], first)
-            self.assertEqual(set(ids[:len(known)]), known)
+            self.assertEqual(len(set(ids)), 89)
+            # A 2026 dated news block and an older 2024 event retain their relative order.
+            newer = ids.index("v001-t000436")
+            older = ids.index("v127-t008494")
+            self.assertEqual(newer < older, order == "event-new")
         p.locator("#sort").select_option("city-asc")
         self.assertIn("Белгород-Днестровский",p.locator(".result").first.text_content())
         p.locator("#sort").select_option("city-desc")
@@ -310,7 +323,7 @@ class Catalog(unittest.TestCase):
         self.assertEqual(p.locator(".video-group summary strong").inner_text(),"Одесса")
         p.goto(self.url+"#cat=shelling&group=year")
         expect(p.locator("#eventGroup")).to_have_value("year")
-        self.assertIn("Дата события не установлена",p.locator(".video-group summary").last.inner_text())
+        self.assertEqual(p.locator(".video-group summary strong").all_text_contents(), ["2026","2025","2024"])
         self.assertEqual(p.evaluate("eventInterval('2025-12/2026-01')"),
                          {"start":"2025-12-01","end":"2026-01-31"})
         self.assertEqual(p.evaluate("eventInterval('2024-02')")["end"],"2024-02-29")

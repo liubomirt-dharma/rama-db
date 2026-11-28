@@ -128,21 +128,38 @@ const shellingDates = {
   'v066-t001319':['2025-09-20','20.09.2025'],
   'v068-t000535':['2025-09-07','07.09.2025'],
   'v069-t000344':['2025-08-28,2025-08-30','28 и 30 августа 2025 года'],
-  'v094-t000398':['2025-04-23/2025-04-24','23/24.04.2025'],
+  'v094-t000398':['2025-04-23,2025-04-24','23/24.04.2025'],
   'v127-t008494':['2024-09-04','4 сентября 2024'],
-  'v084-full':['2025-06-23/2025-06-24','23/24.06.2025'],
+  'v084-full':['2025-06-23,2025-06-24','23/24.06.2025'],
   'v086-full':['2025-06-17,2025-06-20','17/20.06.2025']
 };
 
 // Ручные сопоставления: период, проверочная карточка, основание.
-// Для продолжений многодневных сводок подтверждён месяц, а не день удара.
+// Диапазон сводки относится ко всему обзору.
 const shellingContextDates = {
-  'v001-t000882': ['2026-11','v001-t000436','Кадры из ноябрьской сводки'],
+  'v001-t000882': ['2026-11-18/2026-11-22','v001-t000436','Кадры из ноябрьской сводки'],
   'v001-t001314': ['2026-11','v001-t000436','Продолжение ноябрьской сводки'],
-  'v001-t001813': ['2026-11','v001-t000436','Итоги ноябрьской сводки'],
-  'v002-t001451': ['2026-11','v002-t001140','Кадры последствий из ноябрьской хроники'],
+  'v001-t001813': ['2026-11-18/2026-11-22','v001-t000436','Итоги ноябрьской сводки'],
+  'v002-t001451': ['2026-11-08/2026-11-13','v002-t001140','Кадры последствий из ноябрьской хроники'],
   'v017-t002440': ['2026-07-06','v017-t001825','Продолжение рассказа об атаке на Киев'],
   'v085-t000478': ['2025-06-17,2025-06-20','v086-full','Те же города и оба июньских дня в описании киртана']
+};
+
+// Дни из книги v6 для сведений с предположительным годом.
+const shellingMonthDays = {
+  'v004-t000292': ['10-29'],
+  'v004-t000567': ['10-29'],
+  'v004-t000953': ['10-29'],
+  'v007-t000373': ['10-07'],
+  'v007-t001638': ['10-07'],
+  'v013-t000179': ['08-20'],
+  'v015-t000082': ['07-19'],
+  'v020-t000110': ['06-15'],
+  'v057-t000368': ['12-01'],
+  'v058-t000480': ['11-25', '11-29'],
+  'v092-t000520': ['05-07'],
+  'v096-t000673': ['04-04'],
+  'v100-t000595': ['03-06']
 };
 
 function eventInterval(spec) {
@@ -175,7 +192,7 @@ function eventLabel(spec) {
   return spec.split(',').map(range=>range.split('/').map(format).join(' — ')).join(' и ');
 }
 
-function createShellingIndex(items) {
+function createShellingIndex(items, videos) {
   const collator = new Intl.Collator('ru');
   const canonical = new Map();
   const aliases = new Map();
@@ -189,19 +206,26 @@ function createShellingIndex(items) {
     const cities = [...new Set(item.keywords.map(k => canonical.get(normalize(k))).filter(Boolean))].sort(collator.compare);
     for (const city of cities) citySet.add(city);
     const evidence = shellingContextDates[item.id];
-    const [spec='', quote=''] = shellingDates[item.id] || [evidence?.[0]];
+    const [documented='', quote=''] = shellingDates[item.id] || [evidence?.[0]];
+    const publicationYear = /^(\d{4})-\d{2}-\d{2}$/.exec(videos.get(item.video)?.date)?.[1];
+    const inferred = !documented && Boolean(publicationYear);
+    let spec = documented;
+    if (inferred) {
+      const days = shellingMonthDays[item.id];
+      spec = days ? days.map(day => publicationYear+'-'+day).join(',') : publicationYear;
+    }
 
     const intervals = spec ? spec.split(',').map(eventInterval) : [];
     const years = yearsCovered(intervals);
     for (const y of years) yearSet.add(y);
-    metadata.set(item.id,{cities, years, spec, quote, evidence, start:intervals[0]?.start,end:intervals.at(-1)?.end});
+    metadata.set(item.id,{cities, years, spec, quote, evidence, inferred, start:intervals[0]?.start,end:intervals.at(-1)?.end});
   }
   return {metadata, cities:[...citySet].sort(collator.compare), years:[...yearSet].sort((a,b)=>b-a),
     canonical:name=>canonical.get(normalize(name)), matches:(city,q)=>aliases.get(city).some(a=>a.includes(normalize(q.trim()))), compare:collator.compare};
 }
 
-function createShellingPanel(items, onChange) {
-  const data = createShellingIndex(items);
+function createShellingPanel(items, videos, onChange) {
+  const data = createShellingIndex(items, videos);
   const get = id=>document.getElementById(id);
   const sorts = {'event-new':'Сначала новые события','event-old':'Сначала старые события','city-asc':'По городам: А–Я','city-desc':'По городам: Я–А'};
   let enabled=false, period='all', year='', group='none';
@@ -304,9 +328,9 @@ function createShellingPanel(items, onChange) {
     for(const item of list) {
       const m=data.metadata.get(item.id);
       const keys=group==='city'?m.cities.filter(c=>!selected.size||selected.has(c)):
-        group==='year'?[...m.years].filter(y=>target===null||target===y):m.spec?[m.spec]:[];
+        group==='year'?[...m.years].filter(y=>target===null||target===y):m.spec?[m.spec+(m.inferred?'~':'')]:[];
       for(const k of keys.length?keys:['']) {
-        if(!map.has(k)) map.set(k,{key:group+':'+k,label:group==='date' && k?eventLabel(k):String(k),items:[]});
+        if(!map.has(k)) map.set(k,{key:group+':'+k,label:group==='date' && k?eventLabel(m.spec)+(m.inferred?' · год по публикации':''):String(k),items:[]});
         map.get(k).items.push(item);
       }
     }
@@ -443,7 +467,7 @@ $('peopleList').innerHTML = [...people.entries()]
   .join('');
 let directoryOpen=false, person='', source='';
 let bookmarks=new Set();try{bookmarks=new Set(JSON.parse(localStorage.getItem('rama-favorites')||'[]'));if(localStorage.getItem('rama-theme')==='light')document.body.classList.add('light')}catch(e){}
-const archive=createShellingPanel(db.items,()=>{limit=24;render(true)});
+const archive=createShellingPanel(db.items,vidMap,()=>{limit=24;render(true)});
 function archiveActive(){return category==='shelling' && mode==='items' && !savedOnly && !directoryOpen}
 let category='',section='',mode='items',savedOnly=false,limit=24,last=[],searchTimer; const openedSections=new Set(['war']);function readLocation(){
 const params=new URLSearchParams(location.hash.slice(1));
@@ -546,6 +570,7 @@ function card(i, nested=false) {
   const materialCount = whole ? (chapters.get(i.video) || []).filter(c => c.type !== 'service').length : 0;
   return `<article class="result">
     <h3>${eventTitle(i)}</h3>
+    ${event?.inferred ? `<div class="event-date">${safe(eventLabel(event.spec))} · предположительный год по публикации видео</div>` : ''}
     ${event?.evidence ? `<div class="event-date">События: ${safe(eventLabel(event.spec))} · <button class="external" data-open="${safe(event.evidence[1])}" title="${safe(event.evidence[2])}">Источник даты</button></div>` : ''}
     ${showImage ? `<button class="thumb-link" data-open="${id}" aria-label="Открыть видео">${thumbnail(i.video)}</button>` : ''}
     ${description ? `<p class="excerpt">${context ? 'Из описания видео · ' : ''}${hl(description)}</p>` : ''}
